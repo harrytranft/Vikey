@@ -95,7 +95,7 @@ struct MainView: View {
                 Button { select(t.id) } label: {
                     VStack(spacing: 3) {
                         Image(systemName: t.icon).font(.system(size: 18)).frame(height: 22)
-                        Text(t.title).font(.system(size: 11))
+                        Text(t.title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.8)
                     }
                     .frame(width: 72, height: 50)
                     .foregroundStyle(on ? Color.accentColor : Color.secondary)
