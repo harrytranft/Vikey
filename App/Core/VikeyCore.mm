@@ -428,10 +428,6 @@ extern "C" {
         _textExpansionInEnglish = get(@"UseMacroInEnglishMode", 1) != 0;
         _textExpansionAutoCaps = get(@"vAutoCapsMacro", 0) != 0;
         ReloadTextExpansions();
-        _textExpansionEnabled = get(@"UseMacro", 1) != 0;
-        _textExpansionInEnglish = get(@"UseMacroInEnglishMode", 1) != 0;
-        _textExpansionAutoCaps = get(@"vAutoCapsMacro", 0) != 0;
-        ReloadTextExpansions();
         int hotkey = get(@"SwitchKeyStatus", 0);
         vSwitchKeyStatus = hotkey ? hotkey : 0x7A000206;  // default ⌥Z
         vEmojiHotkey = get(@"EmojiPicker", 0) ? get(@"EmojiHotkey", 0) : 0;
@@ -585,7 +581,6 @@ extern "C" {
     
     void OnInputMethodChanged() {
         ResetEnglishWord(true);   // switched from the menu or the control panel: nothing to look back on
-        ResetTextExpansion();
         ResetTextExpansion();
         if (vUseSmartSwitchKey) {
             queryFrontMostApp();
