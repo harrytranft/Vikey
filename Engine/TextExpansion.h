@@ -41,6 +41,9 @@ public:
     void clear();
 
     TextExpansionMatch find(const std::u16string& visibleToken, bool autoCaps) const;
+    // True when at least one configured trigger begins with this visible prefix.
+    // Used by platform layers so punctuation can be part of OpenKey-style triggers (e.g. ".btvn").
+    bool hasPrefix(const std::u16string& visiblePrefix) const;
 
 private:
     std::vector<TextExpansionEntry> entries_;
