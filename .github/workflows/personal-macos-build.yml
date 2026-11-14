@@ -1,0 +1,185 @@
+name: Personal macOS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: "Build architecture"
+        required: true
+        type: choice
+        default: universal
+        options:
+          - universal
+          - arm64
+          - x86_64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Vikey for macOS
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Show build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project Vikey.xcodeproj -scheme Vikey
+
+      - name: Build unsigned app
+        env:
+          BUILD_ARCHITECTURE: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          DERIVED_DATA="$RUNNER_TEMP/VikeyDerivedData"
+          if [ "$BUILD_ARCHITECTURE" = "universal" ]; then
+            ARCHS="arm64 x86_64"
+          else
+            ARCHS="$BUILD_ARCHITECTURE"
+          fi
+
+          xcodebuild \
+            -project Vikey.xcodeproj \
+            -scheme Vikey \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$DERIVED_DATA" \
+            ARCHS="$ARCHS" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          APP_PATH="$DERIVED_DATA/Build/Products/Release/Vikey.app"
+          test -d "$APP_PATH"
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Disable upstream Sparkle updates in personal build
+        run: |
+          set -euo pipefail
+          PLIST="$APP_PATH/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :SUAutomaticallyUpdate false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Delete :SUScheduledCheckInterval" "$PLIST" || true
+          echo "Personal build: Sparkle automatic updates disabled."
+
+      - name: Ad-hoc sign app bundle
+        run: |
+          set -euo pipefail
+          codesign --force --deep --sign - --entitlements App/Vikey.entitlements "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+
+      - name: Package app and installation guide
+        id: package
+        env:
+          BUILD_ARCHITECTURE: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist")
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
+          BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Contents/Info.plist")
+          BUILT_ARCHS=$(lipo -archs "$APP_PATH/Contents/MacOS/$EXECUTABLE")
+
+          if [ "$BUILD_ARCHITECTURE" = "universal" ]; then
+            echo "$BUILT_ARCHS" | grep -q arm64
+            echo "$BUILT_ARCHS" | grep -q x86_64
+          else
+            echo "$BUILT_ARCHS" | grep -q "$BUILD_ARCHITECTURE"
+          fi
+
+          PACKAGE_ROOT="$RUNNER_TEMP/Vikey-Personal-macOS"
+          mkdir -p "$PACKAGE_ROOT"
+          ditto "$APP_PATH" "$PACKAGE_ROOT/Vikey.app"
+
+          cat > "$PACKAGE_ROOT/INSTALL.txt" <<'EOF'
+          VIKEY — PERSONAL macOS BUILD
+
+          INSTALL
+          1. Quit Vikey completely (including its menu-bar icon).
+          2. Move the existing Vikey.app from /Applications to a backup location.
+          3. Move this Vikey.app into /Applications.
+          4. If macOS blocks the app because it is not notarized, open System Settings >
+             Privacy & Security and use Open Anyway, or Control-click the app and choose Open.
+          5. Launch Vikey and re-grant Accessibility and Input Monitoring permissions if macOS asks.
+
+          IMPORTANT
+          - This personal build has Sparkle automatic update checks disabled and its upstream
+            update feed/public key removed. It will not update itself from vikey.app.
+          - The app is ad-hoc signed, not Developer ID signed or notarized.
+          - Keep a backup of the previous app before replacing it.
+          - Your text-expansion data is stored separately from the app bundle.
+
+          If Gatekeeper still blocks the downloaded app and you trust this build, remove the
+          quarantine attribute from the app in Terminal:
+              xattr -dr com.apple.quarantine /Applications/Vikey.app
+          EOF
+
+          cat > "$PACKAGE_ROOT/BUILD-INFO.txt" <<EOF
+          Version: $VERSION
+          Build: $BUILD_NUMBER
+          Architecture requested: $BUILD_ARCHITECTURE
+          Architectures included: $BUILT_ARCHS
+          Branch: $GITHUB_REF_NAME
+          Commit: $GITHUB_SHA
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+
+          ZIP_NAME="Vikey-macOS-$BUILD_ARCHITECTURE-$VERSION-$GITHUB_RUN_NUMBER.zip"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$PACKAGE_ROOT" "dist/$ZIP_NAME"
+          shasum -a 256 "dist/$ZIP_NAME" > "dist/$ZIP_NAME.sha256"
+
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "architectures=$BUILT_ARCHS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload downloadable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vikey-macOS-${{ inputs.architecture }}-${{ github.run_number }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Build summary
+        run: |
+          {
+            echo "## Personal macOS build ready"
+            echo ""
+            echo "- Version: ${{ steps.package.outputs.version }}"
+            echo "- Requested architecture: ${{ inputs.architecture }}"
+            echo "- Architectures included: ${{ steps.package.outputs.architectures }}"
+            echo "- Artifact: ${{ steps.package.outputs.zip_name }}"
+            echo "- Branch: $GITHUB_REF_NAME"
+            echo "- Commit: $GITHUB_SHA"
+            echo ""
+            echo "Download the ZIP from the Artifacts section below this workflow run."
+            echo "Sparkle automatic updates are disabled in this personal build."
+          } >> "$GITHUB_STEP_SUMMARY"
