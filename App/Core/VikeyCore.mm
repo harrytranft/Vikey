@@ -756,6 +756,30 @@ extern "C" {
         return false;
     }
 
+    static std::u16string EventText(CGEventRef event) {
+        UniChar chars[8] = {};
+        UniCharCount n = 0;
+        CGEventKeyboardGetUnicodeString(event, 8, &n, chars);
+        std::u16string text;
+        if (n <= 0 || n > 8) return text;
+        text.reserve((std::size_t)n);
+        for (UniCharCount i = 0; i < n; ++i) text.push_back((char16_t)chars[i]);
+        return text;
+    }
+
+    // Punctuation normally ends a trigger, but OpenKey-style shortcuts often start with punctuation
+    // (for example ".btvn"). If the visible token plus this key is a configured trigger prefix,
+    // keep collecting instead of treating the punctuation as a boundary.
+    static bool BoundaryContinuesConfiguredTrigger(CGEventRef event) {
+        if (!IsTextExpansionBoundary(_keycode, (_flag & kCGEventFlagMaskShift) != 0)) return false;
+        if (_keycode == KEY_SPACE || _keycode == KEY_RETURN || _keycode == KEY_ENTER || _keycode == KEY_TAB) return false;
+        std::u16string text = EventText(event);
+        if (text.empty()) return false;
+        std::u16string candidate = _textExpansionSession.token();
+        candidate += text;
+        return _textExpansion.hasPrefix(candidate);
+    }
+
     static std::u16string EngineInsertedText() {
         std::u16string out;
         for (int k = pData->newCharCount - 1; k >= 0; --k) {
@@ -803,24 +827,21 @@ extern "C" {
         }
         if (OTHER_CONTROL_KEY) { ResetTextExpansion(); return; }
         if (_keycode == KEY_DELETE) { _textExpansionSession.erase(1); return; }
-        if (IsTextExpansionBoundary(_keycode, (_flag & kCGEventFlagMaskShift) != 0)) {
+        bool boundary = IsTextExpansionBoundary(_keycode, (_flag & kCGEventFlagMaskShift) != 0);
+        if (boundary && !BoundaryContinuesConfiguredTrigger(event)) {
             ResetTextExpansion();
             return;
         }
 
-        UniChar chars[8] = {};
-        UniCharCount n = 0;
-        CGEventKeyboardGetUnicodeString(event, 8, &n, chars);
-        if (n <= 0 || n > 8) { ResetTextExpansion(); return; }
-        std::u16string text;
-        text.reserve((std::size_t)n);
-        for (UniCharCount i = 0; i < n; ++i) text.push_back((char16_t)chars[i]);
+        std::u16string text = EventText(event);
+        if (text.empty()) { ResetTextExpansion(); return; }
         _textExpansionSession.append(text);
     }
 
-    static bool TryTextExpansionBoundary() {
+    static bool TryTextExpansionBoundary(CGEventRef event) {
         bool shift = (_flag & kCGEventFlagMaskShift) != 0;
         if (!IsTextExpansionBoundary(_keycode, shift)) return false;
+        if (BoundaryContinuesConfiguredTrigger(event)) return false;
 
         bool allowed = _textExpansionEnabled && (vLanguage != 0 || _textExpansionInEnglish) &&
                        !(vOtherLanguage && _otherInputLanguage) && !SensitiveTypingContext();
@@ -1429,7 +1450,7 @@ extern "C" {
         // Replacement events carry VIKEY_EVENT_TAG and therefore cannot recursively expand.
         if (type == kCGEventKeyDown &&
             !(_flag & (kCGEventFlagMaskCommand | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate | kCGEventFlagMaskHelp)) &&
-            TryTextExpansionBoundary())
+            TryTextExpansionBoundary(event))
             return NULL;
         
         //If is in english mode
