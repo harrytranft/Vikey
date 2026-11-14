@@ -439,6 +439,18 @@ static char16_t VisiblePhysicalChar(Uint16 key) {
     return (char16_t)ch;
 }
 
+// Punctuation normally ends a trigger, but OpenKey-style shortcuts can start with punctuation
+// (for example ".btvn"). Keep it in the session when the resulting token is a configured prefix.
+static bool BoundaryContinuesConfiguredTrigger() {
+    if (!IsTextExpansionBoundary(_keycode, (_flag & F_SHIFT) != 0)) return false;
+    if (_keycode == KEY_SPACE || _keycode == KEY_RETURN || _keycode == KEY_ENTER || _keycode == KEY_TAB) return false;
+    char16_t ch = VisiblePhysicalChar(_keycode);
+    if (!ch) return false;
+    std::u16string candidate = _textExpansionSession.token();
+    candidate.push_back(ch);
+    return _textExpansion.hasPrefix(candidate);
+}
+
 static std::u16string EngineInsertedText() {
     std::u16string out;
     for (int k = pData->newCharCount - 1; k >= 0; --k) {
@@ -474,6 +486,7 @@ static void SyncTextExpansionFromEngine() {
 static bool TryTextExpansionBoundary() {
     bool shift = (_flag & F_SHIFT) != 0;
     if (!IsTextExpansionBoundary(_keycode, shift)) return false;
+    if (BoundaryContinuesConfiguredTrigger()) return false;
 
     bool allowed = _textExpansionEnabled && (vLanguage != 0 || _textExpansionInEnglish) &&
                    !(vOtherLanguage && _otherInputLanguage) && !SensitiveTypingApp() && !site::focusedIsPassword();
@@ -515,7 +528,8 @@ static void TrackUnprocessedTextExpansionKey() {
     }
     if (OTHER_CONTROL_KEY) { ResetTextExpansion(); return; }
     if (_keycode == KEY_DELETE) { _textExpansionSession.erase(1); return; }
-    if (IsTextExpansionBoundary(_keycode, (_flag & F_SHIFT) != 0)) { ResetTextExpansion(); return; }
+    bool boundary = IsTextExpansionBoundary(_keycode, (_flag & F_SHIFT) != 0);
+    if (boundary && !BoundaryContinuesConfiguredTrigger()) { ResetTextExpansion(); return; }
 
     char16_t ch = VisiblePhysicalChar(_keycode);
     if (ch) _textExpansionSession.append(ch);
