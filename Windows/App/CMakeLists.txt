@@ -1,4 +1,5 @@
 # Vikey.exe: tray app + hooks. Built only on Windows (MSVC).
+option(VIKEY_PERSONAL_BUILD "Disable upstream auto-updates in personal builds" OFF)
 # One version for every platform: project.yml's MARKETING_VERSION, unless -DVIKEY_VERSION overrides it.
 unset(VIKEY_VERSION CACHE)   # never a stale cached value
 if(NOT VIKEY_VERSION)
@@ -15,6 +16,9 @@ set_source_files_properties(third_party/tweetnacl.c PROPERTIES COMPILE_FLAGS "/w
 set_target_properties(vikey PROPERTIES OUTPUT_NAME Vikey)
 target_include_directories(vikey PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vikey PRIVATE UNICODE _UNICODE VIKEY_VERSION="${VIKEY_VERSION}" VIKEY_BUILD="${VIKEY_BUILD}")
+if(VIKEY_PERSONAL_BUILD)
+  target_compile_definitions(vikey PRIVATE VIKEY_PERSONAL_BUILD=1)
+endif()
 target_link_libraries(vikey PRIVATE vikey_engine user32 shell32 gdi32 advapi32 comdlg32 imm32 psapi ole32 oleaut32 comctl32 gdiplus winhttp winmm d2d1 dwrite dwmapi normaliz)
 target_link_options(vikey PRIVATE /MANIFEST:NO)
 # Live test runner: a window with an edit control, types through SendInput while Vikey runs, reads the text back.
