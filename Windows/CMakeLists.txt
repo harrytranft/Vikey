@@ -6,6 +6,11 @@ cmake_minimum_required(VERSION 3.21)
 # Static C++ runtime (/MT): Vikey.exe runs without the Visual C++ Redistributable, which the installer and zip don't ship (#79)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 project(Vikey LANGUAGES C CXX)
+# MSVC otherwise interprets UTF-8 source files using the active Windows code page.
+# Apply this to every target, including standalone test executables that compile Engine/*.cpp directly.
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
