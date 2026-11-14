@@ -206,12 +206,27 @@ static void CALLBACK timerProc(HWND, UINT, UINT_PTR, DWORD) {
 }
 void start(HWND owner) {
     _owner = owner;
+#ifdef VIKEY_PERSONAL_BUILD
+    // Personal builds must never silently replace themselves with the upstream vikey.app release.
+    prefs::setInt(L"AutoUpdate", 0);
+    std::wstring pending = prefs::getString(L"PendingUpdatePath", L"");
+    if (!pending.empty()) DeleteFileW(pending.c_str());
+    forgetPending();
+    return;
+#else
     _pendingPath = prefs::getString(L"PendingUpdatePath", L"");
     if (!_pendingPath.empty() && GetFileAttributesW(_pendingPath.c_str()) == INVALID_FILE_ATTRIBUTES) forgetPending();
     SetTimer(owner, TIMER_UPDATE, 60 * 60 * 1000, timerProc);                  // hourly: is a daily check due?
     std::thread([] { Sleep(20000); if (prefs::getInt(L"AutoUpdate", 1) && time(nullptr) - prefs::getInt(L"LastUpdateCheck", 0) >= 24 * 3600) check(false); }).detach();
+#endif
 }
-void checkNow(HWND owner) { _owner = owner; check(true); }
+void checkNow(HWND owner) {
+#ifdef VIKEY_PERSONAL_BUILD
+    MessageBoxW(owner, L"Đây là bản Vikey build cá nhân. Hãy tải phiên bản mới từ GitHub Actions thay vì cập nhật từ vikey.app.", L"Vikey", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+#else
+    _owner = owner; check(true);
+#endif
+}
 bool installPendingAndQuit() {
     if (_pendingPath.empty()) return false;
     std::wstring v = prefs::getString(L"PendingUpdateVersion", L"");
@@ -221,11 +236,19 @@ bool installPendingAndQuit() {
     return ok;
 }
 bool installPendingAtLaunch() {
+#ifdef VIKEY_PERSONAL_BUILD
+    // Discard an upstream installer downloaded by a previous non-personal installation.
+    std::wstring p = prefs::getString(L"PendingUpdatePath", L"");
+    if (!p.empty()) DeleteFileW(p.c_str());
+    forgetPending();
+    return false;
+#else
     std::wstring p = prefs::getString(L"PendingUpdatePath", L""), v = prefs::getString(L"PendingUpdateVersion", L"");
     if (p.empty()) return false;
     if (GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES || compareVersions(v, widen(VIKEY_VERSION)) <= 0) { DeleteFileW(p.c_str()); forgetPending(); return false; }
     forgetPending();
     return runInstaller(p, true);
+#endif
 }
 
 }}
