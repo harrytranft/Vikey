@@ -149,7 +149,6 @@ final class TextExpansionSettingsModel: ObservableObject {
             return false
         }
         entries = next
-        Preferences.apply()
         return true
     }
 }
