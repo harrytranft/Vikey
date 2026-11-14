@@ -54,6 +54,19 @@ static void typeKeys(const std::wstring& s) {
 }
 static std::wstring editText() { int n = GetWindowTextLengthW(_edit); std::wstring s(n, 0); GetWindowTextW(_edit, &s[0], n + 1); return s; }
 static std::wstring fromUtf8(const std::string& s) { int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0); std::wstring w(n, 0); MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n); return w; }
+static std::wstring decodeExpected(std::wstring s) {
+    std::wstring out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == L'\\' && i + 1 < s.size()) {
+            wchar_t c = s[++i];
+            if (c == L'n') out.push_back(L'\n');
+            else if (c == L't') out.push_back(L'\t');
+            else if (c == L'b') out.push_back(L'\b');
+            else { out.push_back(L'\\'); out.push_back(c); }
+        } else out.push_back(s[i]);
+    }
+    return out;
+}
 static std::string toUtf8(const std::wstring& w) { int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr); std::string s(n, 0); WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr); return s; }
 
 int wmain(int argc, wchar_t** argv) {
@@ -98,7 +111,7 @@ int wmain(int argc, wchar_t** argv) {
         Sleep(100);
         typeKeys(fromUtf8(col[2]));
         for (int t = 0; t < 20; t++) { MSG m; while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } Sleep(10); }
-        std::wstring got = editText(); std::wstring exp = fromUtf8(col[3]);
+        std::wstring got = editText(); std::wstring exp = decodeExpected(fromUtf8(col[3]));
         // the edit control uses \r\n
         std::wstring g2; for (wchar_t ch : got) if (ch != L'\r') g2 += ch;
         bool ok = g2 == exp;
