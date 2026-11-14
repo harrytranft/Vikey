@@ -53,12 +53,11 @@ final class TextExpansionSettingsModel: ObservableObject {
         }
 
         var next = entries
-        if let duplicate = next.firstIndex(where: { $0.trigger == trigger && $0.id != id }) {
-            next[duplicate].replacement = replacement
-            if let id, let old = next.firstIndex(where: { $0.id == id }), old != duplicate {
-                next.remove(at: old)
-            }
-        } else if let id, let index = next.firstIndex(where: { $0.id == id }) {
+        if next.contains(where: { $0.trigger == trigger && $0.id != id }) {
+            errorMessage = "Từ gõ tắt này đã tồn tại. Hãy sửa mục hiện có hoặc chọn một từ khác."
+            return false
+        }
+        if let id, let index = next.firstIndex(where: { $0.id == id }) {
             next[index] = TextExpansionItem(id: id, trigger: trigger, replacement: replacement)
         } else {
             next.append(TextExpansionItem(trigger: trigger, replacement: replacement))
