@@ -26,3 +26,5 @@ Tools/text_expansion/text_expansion_test
 Tools/text_expansion/text_expansion_test.exe
 Tools/text_expansion/text_expansion_io_test
 Tools/text_expansion/text_expansion_io_test.exe
+Tools/text_expansion/text_expansion_engine_test
+Tools/text_expansion/text_expansion_engine_test.exe
