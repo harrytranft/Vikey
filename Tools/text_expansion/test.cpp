@@ -24,6 +24,7 @@ static void testBasicLookup() {
         {u"ss", u"Sun Santa"},
         {u"heart", u"❤️"},
         {u"sig", u"Harry Tran\nSun Santa"},
+        {u"pad", u"  giữ khoảng trắng  "},
     });
 
     auto dc = m.find(u"dc", false);
@@ -36,6 +37,7 @@ static void testBasicLookup() {
     expect(!m.find(u"d", false).matched, "does not match prefixes");
     expect(m.find(u"heart", false).replacement == u"❤️", "emoji replacement");
     expect(m.find(u"sig", false).replacement == u"Harry Tran\nSun Santa", "multiline replacement");
+    expect(m.find(u"pad", false).replacement == u"  giữ khoảng trắng  ", "replacement preserves leading/trailing whitespace");
 }
 
 static void testMutation() {
@@ -134,6 +136,12 @@ static void testSurrogateHandling() {
     m.setEntries({{std::u16string({0xD83D, 0xDE00}), u"smile"}});
     auto match = m.find(std::u16string({0xD83D, 0xDE00}), false);
     expect(match.matched && match.deleteCount == 1, "match delete count counts surrogate pair as one scalar");
+
+    TextExpansionManager emojiTrigger;
+    emojiTrigger.setEntries({{std::u16string({0xD83D, 0xDE00}), u"smile"}});
+    auto emojiMatch = emojiTrigger.find(std::u16string({0xD83D, 0xDE00}), false);
+    expect(emojiMatch.matched && emojiMatch.deleteCount == 1 && emojiMatch.replacement == u"smile",
+           "emoji trigger matches and deletes as one scalar");
 }
 
 int main() {
