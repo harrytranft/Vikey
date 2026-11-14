@@ -1715,7 +1715,7 @@ static NSTimer* _watchdog = nil;
         std::u16string r(replacement.length, u'\0');
         if (trigger.length) [trigger getCharacters:(unichar*)t.data() range:NSMakeRange(0, trigger.length)];
         if (replacement.length) [replacement getCharacters:(unichar*)r.data() range:NSMakeRange(0, replacement.length)];
-        if (!t.empty() && !r.empty()) native.push_back({std::move(t), std::move(r)});
+        if (!t.empty() && !r.empty()) native.push_back({t, r});
     }
     std::string error;
     if (!text_expansion_store::save(native, &error)) return NO;
