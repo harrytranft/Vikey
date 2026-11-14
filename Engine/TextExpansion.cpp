@@ -163,6 +163,15 @@ void TextExpansionManager::clear() {
     lowerIndex_.clear();
 }
 
+bool TextExpansionManager::hasPrefix(const std::u16string& visiblePrefix) const {
+    if (visiblePrefix.empty()) return !entries_.empty();
+    for (const auto& entry : entries_) {
+        if (entry.trigger.size() < visiblePrefix.size()) continue;
+        if (entry.trigger.compare(0, visiblePrefix.size(), visiblePrefix) == 0) return true;
+    }
+    return false;
+}
+
 TextExpansionMatch TextExpansionManager::find(const std::u16string& visibleToken, bool autoCaps) const {
     TextExpansionMatch result;
     if (visibleToken.empty()) return result;
