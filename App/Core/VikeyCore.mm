@@ -1711,8 +1711,10 @@ static NSTimer* _watchdog = nil;
         NSString* trigger = item[@"trigger"];
         NSString* replacement = item[@"replacement"];
         if (![trigger isKindOfClass:NSString.class] || ![replacement isKindOfClass:NSString.class]) continue;
-        std::u16string t((const char16_t*)trigger.UTF16String, trigger.length);
-        std::u16string r((const char16_t*)replacement.UTF16String, replacement.length);
+        std::u16string t(trigger.length, u'\0');
+        std::u16string r(replacement.length, u'\0');
+        if (trigger.length) [trigger getCharacters:(unichar*)t.data() range:NSMakeRange(0, trigger.length)];
+        if (replacement.length) [replacement getCharacters:(unichar*)r.data() range:NSMakeRange(0, replacement.length)];
         if (!t.empty() && !r.empty()) native.push_back({std::move(t), std::move(r)});
     }
     std::string error;
