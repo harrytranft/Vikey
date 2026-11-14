@@ -1,5 +1,7 @@
 import AppKit
+import Combine
 import Foundation
+import UniformTypeIdentifiers
 
 struct TextExpansionItem: Identifiable, Equatable {
     let id: UUID
