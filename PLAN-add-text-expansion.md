@@ -1619,6 +1619,21 @@ Run:
 
 Fix only feature-related regressions.
 
+Phase 7 implementation status:
+
+- [x] Shared matcher/session regressions are wired into macOS and Windows checks.
+- [x] JSON/OpenKey/legacy-data regressions are wired into macOS and Windows checks.
+- [x] Added Engine/Driver ↔ TextExpansionSession integration coverage for `dd -> đ`, `aw -> ă`, `ow -> ơ`, tone edits, Backspace, expansion followed by Auto Switch, recursion prevention, stale-context reset, and Standard/Simple Telex bracket behavior.
+- [x] Expanded Windows live cases for Space, Enter, Tab, punctuation, Backspace and navigation reset.
+- [x] Added `Tools/text_expansion/MANUAL-TESTS.md` with the cross-platform application/layout/safety matrix.
+- [x] Synced the macOS feature branch with the Phase 1–4 merge commit; PR history is clean and not behind `main`.
+- [ ] Execute GitHub Actions macOS app/engine jobs. The fork currently reports no workflow run/status for pushed commits.
+- [ ] Execute the Windows live runner on a real/VM Windows machine.
+- [ ] Execute the macOS manual matrix on a real Mac.
+- [ ] Execute the Windows manual application matrix on a real Windows machine.
+
+Do not mark the feature release-ready merely because the test code is present. The last four execution items above are release gates.
+
 Commit:
 
 ```

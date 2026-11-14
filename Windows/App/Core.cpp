@@ -157,6 +157,7 @@ static bool SensitiveTypingApp() {
         L"1password.exe", L"bitwarden.exe", L"keepassxc.exe", L"keepass.exe", L"lastpass.exe", L"dashlane.exe", L"enpass.exe", L"nordpass.exe",
         L"windowsterminal.exe", L"cmd.exe", L"powershell.exe", L"pwsh.exe", L"putty.exe", L"wezterm-gui.exe", L"alacritty.exe", L"conhost.exe", L"openconsole.exe", L"termius.exe" };
     std::wstring app = _frontApp; std::transform(app.begin(), app.end(), app.begin(), ::towlower);
+    if (app == L"vikey.exe") return true;   // never expand while the user is editing Vikey's own settings.
     for (auto e : excluded) if (app == e) return true;
     return false;
 }
@@ -422,8 +423,11 @@ static wchar_t CharacterOf(Uint32 data) { return (data & CHAR_CODE_MASK) ? (wcha
 
 static bool IsTextExpansionBoundary(Uint16 key, bool shift) {
     if (key == KEY_SPACE || key == KEY_RETURN || key == KEY_ENTER || key == KEY_TAB) return true;
-    if (!shift && (key == KEY_COMMA || key == KEY_DOT || key == KEY_SEMICOLON || key == KEY_RIGHT_BRACKET)) return true;
-    if (shift && (key == KEY_SEMICOLON || key == KEY_SLASH || key == KEY_1 || key == KEY_0 || key == KEY_RIGHT_BRACKET)) return true;
+    bool literalRightBracket = !(vLanguage == 1 && vTelexStyle == 0); // standard Telex uses ] to type ư.
+    if (!shift && (key == KEY_COMMA || key == KEY_DOT || key == KEY_SEMICOLON ||
+                   (key == KEY_RIGHT_BRACKET && literalRightBracket))) return true;
+    if (shift && (key == KEY_SEMICOLON || key == KEY_SLASH || key == KEY_1 || key == KEY_0 ||
+                  (key == KEY_RIGHT_BRACKET && literalRightBracket))) return true;
     return false;
 }
 

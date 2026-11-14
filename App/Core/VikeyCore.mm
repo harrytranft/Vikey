@@ -10,6 +10,8 @@
 #import <Carbon/Carbon.h>
 #import <Foundation/Foundation.h>
 #import "Engine.h"
+#import "TextExpansion.h"
+#import "TextExpansionStore.h"
 #import "VikeyCore.h"
 
 /// The switch sound (Tony picked "sparkle", 2026-10-29): two tiny notes, rising into Vietnamese, falling into English.
@@ -71,6 +73,20 @@ int vLanguage = 1, vSwitchKeyStatus = 0x7A000206, vCheckSpelling = 1, vUseModern
 int vRestoreIfWrongSpelling = 1, vFixRecommendBrowser = 1, vUseSmartSwitchKey = 1, vOtherLanguage = 1;
 int vAutoSwitchByTyping = 1, vPerformLayoutCompat = 0;
 
+// ---- Text expansion ("Gõ tắt") -------------------------------------------------------------
+static vikey::TextExpansionManager _textExpansion;
+static vikey::TextExpansionSession _textExpansionSession;
+static bool _textExpansionEnabled = true;
+static bool _textExpansionInEnglish = true;
+static bool _textExpansionAutoCaps = false;
+static void ResetTextExpansion() { _textExpansionSession.reset(); }
+
+static void ReloadTextExpansions() {
+    vikey::TextExpansionIOResult r = vikey::text_expansion_store::load();
+    if (r.ok) _textExpansion.setEntries(r.entries);
+}
+
+
 NSNotificationName const VikeyLanguageDidChangeNotification = @"VikeyLanguageDidChange";
 
 static void VKLanguageChanged(BOOL rememberForContext);
@@ -90,6 +106,7 @@ extern "C" {
     UniChar _newChar, _newCharHi;
     CGEventRef _newEventDown, _newEventUp;
     CGKeyCode _keycode;
+    CGKeyCode _physicalKeycode;   // before Dvorak/Colemak/AZERTY compatibility remaps the key for the engine
     CGEventFlags _flag, _lastFlag = 0, _privateFlag;
     // a key or click came while modifiers were held: they were for it, not a modifier-only hotkey (cleared when all are up)
     static bool _modifierChordUsed = false;
@@ -108,6 +125,18 @@ extern "C" {
 
     int _languageTemp = 0; //use for smart switch key
     vector<Byte> savedSmartSwitchKeyData; ////use for smart switch key
+
+    // ---- Text expansion ("Gõ tắt") ---------------------------------------------------
+    static TextExpansionManager _textExpansion;
+    static TextExpansionSession _textExpansionSession;
+    static bool _textExpansionEnabled = true;
+    static bool _textExpansionInEnglish = true;
+    static bool _textExpansionAutoCaps = false;
+    static void ResetTextExpansion() { _textExpansionSession.reset(); }
+    static void ReloadTextExpansions() {
+        TextExpansionIOResult r = text_expansion_store::load();
+        if (r.ok) _textExpansion.setEntries(r.entries);
+    }
     
     NSString* _frontMostApp = @"UnknownApp";
 
@@ -275,6 +304,7 @@ extern "C" {
 
     /// Dvorak, Colemak, AZERTY...: map each key back to its QWERTY position so Telex works.
     void VKUpdateLayoutCompat() {
+        ResetTextExpansion();
         TISInputSourceRef src = TISCopyCurrentKeyboardLayoutInputSource();
         NSString* sid = src ? (__bridge NSString*)TISGetInputSourceProperty(src, kTISPropertyInputSourceID) : nil;
         static NSSet* qwerty;
@@ -372,6 +402,7 @@ extern "C" {
         [d setObject:m forKey:kAutoSwitchPerApp];
         if (!AutoSwitchPaused()) vAutoSwitchByTyping = AutoSwitchForApp(app);
         StartEnglishWord(false);   // the word being typed now wasn't followed from its start
+        ResetTextExpansion();
     }
 
     void VKLoadSettings() {
@@ -393,10 +424,15 @@ extern "C" {
         UpdateFrontExcluded();
         vTypingLogKeys = get(@"TypingLogKeys", 1);
         vTypingLogEnabled = get(@"TypingLogEnabled", 0);
+        _textExpansionEnabled = get(@"UseMacro", 1) != 0;
+        _textExpansionInEnglish = get(@"UseMacroInEnglishMode", 1) != 0;
+        _textExpansionAutoCaps = get(@"vAutoCapsMacro", 0) != 0;
+        ReloadTextExpansions();
         int hotkey = get(@"SwitchKeyStatus", 0);
         vSwitchKeyStatus = hotkey ? hotkey : 0x7A000206;  // default ⌥Z
         vEmojiHotkey = get(@"EmojiPicker", 0) ? get(@"EmojiHotkey", 0) : 0;
         VKUpdateLayoutCompat();
+        ResetTextExpansion();
     }
 
     void VikeyInit() {
@@ -427,9 +463,11 @@ extern "C" {
     void OnFocusChanged() {
         ResetEnglishWord(true);
         _autoFixUndo.active = false;
+        ResetTextExpansion();
     }
 
     void RequestNewSession() {
+        ResetTextExpansion();
         //send event signal to Engine
         vKeyHandleEvent(vKeyEvent::Mouse, vKeyEventState::MouseDown, 0);
     }
@@ -514,6 +552,7 @@ extern "C" {
         _siteHost = nil;          // the new app's tab is looked up below; until then use the app key
         ResetEnglishWord(true);
         _autoFixUndo.active = false;
+        ResetTextExpansion();
         ApplySmartSwitch();
         UpdateSiteWatcher();
     }
@@ -521,6 +560,7 @@ extern "C" {
     void OnSiteChanged() {
         ResetEnglishWord(true);
         _autoFixUndo.active = false;
+        ResetTextExpansion();
         ApplySmartSwitch();
         startNewSession();
     }
@@ -541,6 +581,7 @@ extern "C" {
     
     void OnInputMethodChanged() {
         ResetEnglishWord(true);   // switched from the menu or the control panel: nothing to look back on
+        ResetTextExpansion();
         if (vUseSmartSwitchKey) {
             queryFrontMostApp();
             UpdateFrontExcluded();
@@ -654,6 +695,7 @@ extern "C" {
         PauseAutoSwitchAfterManual();
         _autoFixUndo.active = false;
         ResetEnglishWord(true);
+        ResetTextExpansion();
         if (vLanguage == 0)
             vLanguage = 1;
         else
@@ -709,6 +751,122 @@ extern "C" {
                 return true;
         }
         return false;
+    }
+
+
+    static bool SensitiveTypingContext();
+
+    static bool IsTextExpansionBoundary(Uint16 key, bool shift) {
+        if (key == KEY_SPACE || key == KEY_RETURN || key == KEY_ENTER || key == KEY_TAB) return true;
+        bool literalRightBracket = !(vLanguage == 1 && vTelexStyle == 0); // standard Telex uses ] to type ư.
+        if (!shift && (key == KEY_COMMA || key == KEY_DOT || key == KEY_SEMICOLON ||
+                       (key == KEY_RIGHT_BRACKET && literalRightBracket))) return true;
+        if (shift && (key == KEY_SEMICOLON || key == KEY_SLASH || key == KEY_1 || key == KEY_0 ||
+                      (key == KEY_RIGHT_BRACKET && literalRightBracket))) return true;
+        return false;
+    }
+
+    static std::u16string EngineInsertedText() {
+        std::u16string out;
+        for (int k = pData->newCharCount - 1; k >= 0; --k) {
+            Uint32 c = pData->charData[k];
+            Uint16 ch = (c & CHAR_CODE_MASK) ? (Uint16)(c & 0xFFFF) : keyCodeToCharacter(c);
+            if (ch) out.push_back((char16_t)ch);
+        }
+        return out;
+    }
+
+    static int TextExpansionTokenScalarCount() {
+        const std::u16string& token = _textExpansionSession.token();
+        int count = 0;
+        for (std::size_t i = 0; i < token.size(); ++i) {
+            char16_t c = token[i];
+            if (c >= 0xD800 && c <= 0xDBFF && i + 1 < token.size() &&
+                token[i + 1] >= 0xDC00 && token[i + 1] <= 0xDFFF) ++i;
+            ++count;
+        }
+        return count;
+    }
+
+    static void SyncTextExpansionFromEngine() {
+        if (IsTextExpansionBoundary(_keycode, (_flag & kCGEventFlagMaskShift) != 0)) {
+            ResetTextExpansion();
+            return;
+        }
+        if (pData->code == vWillProcess) {
+            if (pData->backspaceCount > TextExpansionTokenScalarCount()) {
+                ResetTextExpansion();
+                return;
+            }
+            _textExpansionSession.applyEdit(pData->backspaceCount, EngineInsertedText());
+        } else if (pData->code == vRestore || pData->code == vRestoreAndStartNewSession) {
+            // Restore can replace an arbitrary portion of the word. A missed expansion is safer than a stale match.
+            ResetTextExpansion();
+        }
+    }
+
+    static void TrackUnprocessedTextExpansionKey(CGEventRef event) {
+        if (!_textExpansionEnabled || (vLanguage == 0 && !_textExpansionInEnglish) ||
+            SensitiveTypingContext() || (vOtherLanguage && _otherInputLanguage)) {
+            ResetTextExpansion();
+            return;
+        }
+        if (OTHER_CONTROL_KEY) { ResetTextExpansion(); return; }
+        if (_keycode == KEY_DELETE) { _textExpansionSession.erase(1); return; }
+        if (IsTextExpansionBoundary(_keycode, (_flag & kCGEventFlagMaskShift) != 0)) {
+            ResetTextExpansion();
+            return;
+        }
+
+        UniChar chars[8] = {};
+        UniCharCount n = 0;
+        CGEventKeyboardGetUnicodeString(event, 8, &n, chars);
+        if (n <= 0 || n > 8) { ResetTextExpansion(); return; }
+        std::u16string text;
+        text.reserve((std::size_t)n);
+        for (UniCharCount i = 0; i < n; ++i) text.push_back((char16_t)chars[i]);
+        _textExpansionSession.append(text);
+    }
+
+    static bool TryTextExpansionBoundary() {
+        bool shift = (_flag & kCGEventFlagMaskShift) != 0;
+        if (!IsTextExpansionBoundary(_keycode, shift)) return false;
+
+        bool allowed = _textExpansionEnabled && (vLanguage != 0 || _textExpansionInEnglish) &&
+                       !(vOtherLanguage && _otherInputLanguage) && !SensitiveTypingContext();
+        vikey::TextExpansionMatch match;
+        if (allowed && !_textExpansionSession.token().empty())
+            match = _textExpansion.find(_textExpansionSession.token(), _textExpansionAutoCaps);
+
+        ResetTextExpansion();
+        if (!match.matched) return false;
+
+        int removeCount = match.deleteCount;
+        if (shouldUseRecommendWorkaround(FRONT_APP)) {
+            SendEmptyCharacter();
+            ++removeCount;
+        }
+
+        bool selectedReplacement = shouldUseSelectionReplacement(FRONT_APP);
+        if (selectedReplacement) {
+            for (int i = 0; i < removeCount; ++i) SendShiftAndLeftArrow();
+        } else {
+            for (int i = 0; i < removeCount; ++i) SendBackspace();
+        }
+
+        if (!match.replacement.empty()) {
+            std::vector<UniChar> text;
+            text.reserve(match.replacement.size());
+            for (char16_t c : match.replacement) text.push_back((UniChar)c);
+            PostText(text.data(), (int)text.size());
+        }
+        SendKeyCode(_physicalKeycode, _flag);
+
+        _autoFixUndo.active = false;
+        ResetEnglishWord(true);
+        startNewSession();
+        vAutoSwitchForget();
+        return true;
     }
 
     // ---- Typing log ---------------------------------------------------------------------
@@ -812,7 +970,7 @@ extern "C" {
         dispatch_async(_tlQueue, ^{ dispatch_async(dispatch_get_main_queue(), done); });
     }
 
-    static bool TLKeysAllowed() {
+    static NSSet* SensitiveTypingApps() {
         static NSSet* excluded;
         if (!excluded) excluded = [NSSet setWithArray:@[
             // password managers
@@ -822,7 +980,17 @@ extern "C" {
             // terminals (sudo and ssh passwords are typed in plain view of the event tap)
             @"com.apple.Terminal", @"com.googlecode.iterm2", @"dev.warp.Warp-Stable", @"com.mitchellh.ghostty",
             @"io.alacritty", @"net.kovidgoyal.kitty", @"com.github.wez.wezterm", @"co.zeit.hyper", @"com.termius-dmg.mac"]];
-        return vTypingLogKeys && !IsSecureEventInputEnabled() && ![excluded containsObject:_tlApp];
+        return excluded;
+    }
+
+    static bool SensitiveTypingContext() {
+        NSString* app = FRONT_APP;
+        return IsSecureEventInputEnabled() ||
+               (app != nil && ([app isEqualToString:VIKEY_BUNDLE] || [SensitiveTypingApps() containsObject:app]));
+    }
+
+    static bool TLKeysAllowed() {
+        return vTypingLogKeys && !IsSecureEventInputEnabled() && ![SensitiveTypingApps() containsObject:_tlApp];
     }
 
     static void TLWrite(NSMutableDictionary* d) {
@@ -998,6 +1166,7 @@ extern "C" {
             VKLanguageChanged(YES);
         }
         startNewSession();
+        ResetTextExpansion();
         ResetEnglishWord(false); // the cursor is at the end of a word we didn't see typed
         //back in English with the typed keys on screen: they are the current word again, so typing on
         //("vaay" + "j") is checked as a whole ("vaayj" -> "vậy"); the same word again stays as typed
@@ -1017,6 +1186,7 @@ extern "C" {
         vLanguage = language;
         VKLanguageChanged(YES); // updates the menu bar and the per-app/per-site memory
         startNewSession();
+        ResetTextExpansion();
         vAutoSwitchForget();
     }
 
@@ -1178,6 +1348,7 @@ extern "C" {
 
         _flag = CGEventGetFlags(event);
         _keycode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+        _physicalKeycode = _keycode;
         
         if (type == kCGEventKeyDown && vPerformLayoutCompat) {
             // If conversion fail, use current keycode
@@ -1237,10 +1408,10 @@ extern "C" {
         }
 
         // an excluded app (remote desktop...) is in front: every key goes through as typed
-        if (_frontExcluded) return event;
+        if (_frontExcluded) { ResetTextExpansion(); return event; }
 
         // the emoji picker reads raw keys for its search (it does its own Telex reading)
-        if (vEmojiOpen) return event;
+        if (vEmojiOpen) { ResetTextExpansion(); return event; }
 
         // Backspace right after an automatic correction (D61): the first takes only the break key and keeps the
         // correction ("được " ⌫ "," -> "được,"); a second one right after undoes it. Any other key or click ends that chance
@@ -1253,6 +1424,8 @@ extern "C" {
             _autoFixUndo.active = keepUndo;
             if (type == kCGEventKeyDown) TLNoteKey(_keycode, _flag); else TLNoteClick();
         }
+        if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown || type == kCGEventOtherMouseDown)
+            ResetTextExpansion();
 
         // Also check correct event hooked
         if ((type != kCGEventKeyDown) && (type != kCGEventKeyUp) &&
@@ -1261,6 +1434,13 @@ extern "C" {
             return event;
         
         _proxy = proxy;
+
+        // Text expansion wins at a boundary before Auto Switch can reinterpret the trigger.
+        // Replacement events carry VIKEY_EVENT_TAG and therefore cannot recursively expand.
+        if (type == kCGEventKeyDown &&
+            !(_flag & (kCGEventFlagMaskCommand | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate | kCGEventFlagMaskHelp)) &&
+            TryTextExpansionBoundary())
+            return NULL;
         
         //If is in english mode
         if (vLanguage == 0) {
@@ -1274,8 +1454,11 @@ extern "C" {
             if (vUseSmartSwitchKey && (_flag & (kCGEventFlagMaskCommand | kCGEventFlagMaskControl))) {
                 NudgeSiteCheck();
             }
-            if (vAutoSwitchByTyping && HandleEnglishKeyForAutoSwitch())
+            if (vAutoSwitchByTyping && HandleEnglishKeyForAutoSwitch()) {
+                ResetTextExpansion();
                 return NULL;
+            }
+            TrackUnprocessedTextExpansionKey(event);
             return event;
         }
         
@@ -1290,7 +1473,7 @@ extern "C" {
         }
 
         //another keyboard language (Japanese, Chinese...) is active: stay out of its way
-        if (vOtherLanguage && _otherInputLanguage) return event;
+        if (vOtherLanguage && _otherInputLanguage) { ResetTextExpansion(); return event; }
         
         //handle keyboard
         if (type == kCGEventKeyDown) {
@@ -1302,13 +1485,18 @@ extern "C" {
                             _flag & kCGEventFlagMaskShift ? 1 : (_flag & kCGEventFlagMaskAlphaShift ? 2 : 0),
                             (OTHER_CONTROL_KEY) && !PLAIN_ARROW);
             if (pData->code == vDoNothing) { //do nothing
+                TrackUnprocessedTextExpansionKey(event);
                 return event;
             } else if (pData->code == vWillProcess || pData->code == vRestore || pData->code == vRestoreAndStartNewSession) { //handle result signal
                 
                 bool autoSwitchAtBreak = vAutoSwitchRequest == 0 && !IsLetterKey(_keycode);
                 int correctedCount = pData->newCharCount;
+                SyncTextExpansionFromEngine();
                 SendEngineOutput();
-                if (vAutoSwitchRequest == 0) ApplyAutoSwitchToEnglish(correctedCount, autoSwitchAtBreak);
+                if (vAutoSwitchRequest == 0) {
+                    ResetTextExpansion();
+                    ApplyAutoSwitchToEnglish(correctedCount, autoSwitchAtBreak);
+                }
             }
             
             return NULL;
@@ -1431,6 +1619,7 @@ static NSTimer* _watchdog = nil;
 
 + (void)setLanguageByUser:(int)language {
     if (vLanguage == language) return;
+    ResetTextExpansion();
     vLanguage = language;
     PauseAutoSwitchAfterManual();
     TLManual(@"menu", language);
@@ -1462,7 +1651,7 @@ static NSTimer* _watchdog = nil;
 }
 
 + (void)setEmojiHotkeyHandler:(void (^)(void))handler { vEmojiHandler = [handler copy]; }
-+ (void)setEmojiPickerOpen:(BOOL)open { vEmojiOpen = open; }
++ (void)setEmojiPickerOpen:(BOOL)open { vEmojiOpen = open; ResetTextExpansion(); }
 
 + (int)hotkeyKeyCodeForEvent:(NSEvent *)event {
     // the tap matches hotkeys against the key code mapped back to QWERTY (Dvorak, AZERTY...): record the same
@@ -1474,6 +1663,7 @@ static NSTimer* _watchdog = nil;
 + (void)resetTyping {
     ResetEnglishWord(true);
     _autoFixUndo.active = false;
+    ResetTextExpansion();
     startNewSession();
 }
 
@@ -1494,6 +1684,63 @@ static NSTimer* _watchdog = nil;
         CGEventPost(kCGSessionEventTap, up);
         CFRelease(down); CFRelease(up);
     }
+}
+
+
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)textExpansions {
+    TextExpansionIOResult r = text_expansion_store::load();
+    if (!r.ok) return @[];
+    NSMutableArray* out = [NSMutableArray arrayWithCapacity:r.entries.size()];
+    for (const auto& e : r.entries) {
+        NSString* trigger = [[NSString alloc] initWithCharacters:(const unichar*)e.trigger.data() length:e.trigger.size()];
+        NSString* replacement = [[NSString alloc] initWithCharacters:(const unichar*)e.replacement.data() length:e.replacement.size()];
+        [out addObject:@{@"trigger": trigger ?: @"", @"replacement": replacement ?: @""}];
+    }
+    return out;
+}
+
++ (BOOL)saveTextExpansions:(NSArray<NSDictionary<NSString *, NSString *> *> *)entries {
+    std::vector<TextExpansionEntry> native;
+    native.reserve(entries.count);
+    for (NSDictionary* item in entries) {
+        NSString* trigger = item[@"trigger"];
+        NSString* replacement = item[@"replacement"];
+        if (![trigger isKindOfClass:NSString.class] || ![replacement isKindOfClass:NSString.class]) continue;
+        std::u16string t(trigger.length, u'\0');
+        std::u16string r(replacement.length, u'\0');
+        if (trigger.length) [trigger getCharacters:(unichar*)t.data() range:NSMakeRange(0, trigger.length)];
+        if (replacement.length) [replacement getCharacters:(unichar*)r.data() range:NSMakeRange(0, replacement.length)];
+        if (!t.empty() && !r.empty()) native.push_back({t, r});
+    }
+    std::string error;
+    if (!text_expansion_store::save(native, &error)) return NO;
+    VKLoadSettings();
+    return YES;
+}
+
++ (NSDictionary *)importOpenKeyTextExpansions:(NSString *)text {
+    NSData* data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    std::string utf8;
+    if (data.length) utf8.assign((const char*)data.bytes, data.length);
+    TextExpansionIOResult r = textExpansionImportOpenKey(utf8);
+    NSMutableArray* entries = [NSMutableArray arrayWithCapacity:r.entries.size()];
+    for (const auto& e : r.entries) {
+        NSString* trigger = [[NSString alloc] initWithCharacters:(const unichar*)e.trigger.data() length:e.trigger.size()];
+        NSString* replacement = [[NSString alloc] initWithCharacters:(const unichar*)e.replacement.data() length:e.replacement.size()];
+        [entries addObject:@{@"trigger": trigger ?: @"", @"replacement": replacement ?: @""}];
+    }
+    NSString* error = r.error.empty() ? @"" : [NSString stringWithUTF8String:r.error.c_str()];
+    return @{@"ok": @(r.ok), @"entries": entries, @"imported": @(r.imported),
+             @"replaced": @(r.replaced), @"skipped": @(r.skipped), @"error": error ?: @""};
+}
+
++ (NSDictionary *)exportOpenKeyTextExpansions {
+    TextExpansionIOResult loaded = text_expansion_store::load();
+    if (!loaded.ok) return @{@"ok": @NO, @"text": @"", @"exported": @0, @"skipped": @0, @"error": @"Không đọc được danh sách gõ tắt."};
+    TextExpansionExportResult r = textExpansionExportOpenKey(loaded.entries);
+    NSString* text = [[NSString alloc] initWithBytes:r.text.data() length:r.text.size() encoding:NSUTF8StringEncoding] ?: @"";
+    NSString* error = r.error.empty() ? @"" : [NSString stringWithUTF8String:r.error.c_str()];
+    return @{@"ok": @(r.ok), @"text": text, @"exported": @(r.exported), @"skipped": @(r.skipped), @"error": error ?: @""};
 }
 
 + (NSString*)typingLogPath { return TLLogPath(); }

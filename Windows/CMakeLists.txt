@@ -62,6 +62,12 @@ target_include_directories(text_expansion_io_test PRIVATE ${ENGINE})
 set_target_properties(text_expansion_io_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ROOT}/Tools/text_expansion
   RUNTIME_OUTPUT_DIRECTORY_RELEASE ${ROOT}/Tools/text_expansion RUNTIME_OUTPUT_DIRECTORY_DEBUG ${ROOT}/Tools/text_expansion)
 
+add_executable(text_expansion_engine_test ${ROOT}/Tools/text_expansion/engine_session_test.cpp)
+target_link_libraries(text_expansion_engine_test PRIVATE vikey_engine)
+target_include_directories(text_expansion_engine_test PRIVATE ${ENGINE} ${ENGINE}/platforms)
+set_target_properties(text_expansion_engine_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ROOT}/Tools/text_expansion
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE ${ROOT}/Tools/text_expansion RUNTIME_OUTPUT_DIRECTORY_DEBUG ${ROOT}/Tools/text_expansion)
+
 # Windows app (added in Phase 2)
 if(WIN32 AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/App/CMakeLists.txt)
   add_subdirectory(App)

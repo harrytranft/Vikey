@@ -57,6 +57,15 @@ extern NSNotificationName const VikeyLanguageDidChangeNotification;
 /// Types text into the focused app.
 + (void)insertText:(NSString *)text;
 
+/// Text expansion storage/compatibility bridge used by the macOS settings UI.
+/// Each entry is @{ @"trigger": NSString, @"replacement": NSString }.
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)textExpansions;
++ (BOOL)saveTextExpansions:(NSArray<NSDictionary<NSString *, NSString *> *> *)entries;
+/// Parses OpenKey/UniKey text. Returns entries plus imported/replaced/skipped counts and optional error.
++ (NSDictionary *)importOpenKeyTextExpansions:(NSString *)text;
+/// Exports the current native store to OpenKey/UniKey text plus exported/skipped counts.
++ (NSDictionary *)exportOpenKeyTextExpansions;
+
 /// Typing log.
 + (NSString *)typingLogPath;
 + (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)typingLogStats;

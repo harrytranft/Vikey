@@ -42,10 +42,12 @@ static void testJson() {
         {u"ss", u"Sun Santa"},
         {u"heart", u"❤️"},
         {u"sig", u"Harry \"H\" \\ Tran\nSun Santa\t✓"},
+        {u"pad", u"  giữ nguyên khoảng trắng  "},
     };
     auto r = textExpansionParseJson(textExpansionSerializeJson(src));
     expect(r.ok && same(src, r.entries), "JSON round trip preserves Unicode/emoji/escapes");
-    expect(r.imported == 4 && r.replaced == 0 && r.skipped == 0, "JSON round trip counts");
+    expect(r.imported == 5 && r.replaced == 0 && r.skipped == 0, "JSON round trip counts");
+    expect(r.entries[4].replacement == u"  giữ nguyên khoảng trắng  ", "JSON preserves intentional surrounding whitespace");
 
     auto dup = textExpansionParseJson(
         "{\"unknown\":{\"a\":[1,true,null]},\"version\":1,\"entries\":["
