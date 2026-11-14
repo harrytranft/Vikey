@@ -55,6 +55,7 @@ struct MainView: View {
                 switch tab {
                 case "auto": Section { autoRows }
                 case "viet": Section { vietRows }
+                case "macro": Section { TextExpansionView() }
                 case "emoji": Section { emojiRows }
                 case "excluded": Section { excludedRows }
                 default:
@@ -79,7 +80,8 @@ struct MainView: View {
 
     private static let tabs: [(id: String, title: String, icon: String)] = [
         ("general", "Chung", "gearshape"), ("auto", "Tự chuyển", "arrow.left.arrow.right"),
-        ("viet", "Gõ tiếng Việt", "character.cursor.ibeam"), ("emoji", "Emoji", "face.smiling"), ("excluded", "Loại trừ", "nosign"),
+        ("viet", "Gõ tiếng Việt", "character.cursor.ibeam"), ("macro", "Gõ tắt", "text.badge.plus"),
+        ("emoji", "Emoji", "face.smiling"), ("excluded", "Loại trừ", "nosign"),
     ]
 
     private func select(_ id: String) {
@@ -95,7 +97,7 @@ struct MainView: View {
                         Image(systemName: t.icon).font(.system(size: 18)).frame(height: 22)
                         Text(t.title).font(.system(size: 11))
                     }
-                    .frame(width: 80, height: 50)
+                    .frame(width: 72, height: 50)
                     .foregroundStyle(on ? Color.accentColor : Color.secondary)
                     .background(RoundedRectangle(cornerRadius: 8).fill(on ? Color.primary.opacity(0.08) : .clear))
                     .contentShape(Rectangle())
