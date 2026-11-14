@@ -1,10 +1,19 @@
 # name	start	keys	expected
 expand_vi_space	vi	dc 	được 
 expand_en_space	en	ss 	Sun Santa 
+expand_enter	en	ss\n	Sun Santa\n
+expand_tab	en	ss\t	Sun Santa\t
 expand_comma	en	ss,	Sun Santa,
-expand_question	en	ss?	Sun Santa?
+expand_period	en	ss.	Sun Santa.
+expand_semicolon	en	ss;	Sun Santa;
 expand_colon	en	ph:	phụ huynh:
+expand_exclamation	en	ss!	Sun Santa!
+expand_question	en	ss?	Sun Santa?
+expand_close_paren	en	ss)	Sun Santa)
+expand_close_bracket	en	ss]	Sun Santa]
 expand_close_brace	en	ss}	Sun Santa}
 expand_backspace_then_match	en	sss\b 	Sun Santa 
+expand_backspace_after_expand	en	ss \b	Sun Santa
 expand_not_inside_word	en	abcdc 	abcdc 
-expand_navigation_resets	en	ss{home} 	 ss
+expand_navigation_home_resets	en	ss{home} 	 ss
+expand_navigation_end_roundtrip_resets	en	ss{home}{end} 	ss 
