@@ -163,8 +163,8 @@ static void testExpansionAndFreshContext() {
     expect(h.session.token().empty(), "Backspace does not reopen expanded trigger");
 
     h.reset(1);
-    h.typeLetters("dc hello ");
-    expect(h.screen == u"được hello ", "normal English word follows expansion unchanged");
+    h.typeLetters("dc tomorrow ");
+    expect(h.screen == u"được tomorrow ", "English word with doubled Telex key follows expansion unchanged");
     expect(h.d.language() == 0, "VI->EN auto switch still works after expansion");
 
     h.reset(0);
