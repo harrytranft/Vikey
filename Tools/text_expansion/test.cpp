@@ -25,6 +25,7 @@ static void testBasicLookup() {
         {u"heart", u"❤️"},
         {u"sig", u"Harry Tran\nSun Santa"},
         {u"pad", u"  giữ khoảng trắng  "},
+        {u".btvn", u"Thầy gửi tiến độ làm BTVN của các con bố mẹ nhé!"},
     });
 
     auto dc = m.find(u"dc", false);
@@ -38,6 +39,10 @@ static void testBasicLookup() {
     expect(m.find(u"heart", false).replacement == u"❤️", "emoji replacement");
     expect(m.find(u"sig", false).replacement == u"Harry Tran\nSun Santa", "multiline replacement");
     expect(m.find(u"pad", false).replacement == u"  giữ khoảng trắng  ", "replacement preserves leading/trailing whitespace");
+    expect(m.hasPrefix(u"."), "OpenKey-style punctuation prefix is discoverable");
+    expect(m.hasPrefix(u".bt"), "multi-character trigger prefix is discoverable");
+    expect(!m.hasPrefix(u".xyz"), "unknown prefix is rejected");
+    expect(m.find(u".btvn", false).matched, "dot-prefixed OpenKey trigger matches exactly");
 }
 
 static void testMutation() {
