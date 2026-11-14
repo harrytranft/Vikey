@@ -1,0 +1,158 @@
+name: Personal Windows Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: "Windows architecture"
+        required: true
+        type: choice
+        default: x64
+        options:
+          - x64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Vikey for Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+        shell: pwsh
+
+      - name: Show build environment
+        run: |
+          cmake --version
+          ninja --version
+          cl
+        shell: pwsh
+
+      - name: Run Windows engine and text-expansion checks
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/check.ps1
+        shell: pwsh
+
+      - name: Configure personal Release build
+        run: |
+          cmake -S Windows -B Windows/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVIKEY_PERSONAL_BUILD=ON
+        shell: pwsh
+
+      - name: Build Vikey
+        run: |
+          cmake --build Windows/build --config Release --target vikey
+          if ($LASTEXITCODE -ne 0) { throw "Vikey build failed." }
+          if (-not (Test-Path "Windows/build/App/Vikey.exe")) {
+            Get-ChildItem Windows/build -Recurse -Filter Vikey.exe | Format-Table FullName
+            throw "Vikey.exe was not found at the expected output path."
+          }
+        shell: pwsh
+
+      - name: Verify personal build flags
+        run: |
+          $source = Get-Content Windows/App/Updater.cpp -Raw
+          if ($source -notmatch "VIKEY_PERSONAL_BUILD") { throw "Personal updater guard is missing." }
+          Write-Host "Personal build guard is present."
+        shell: pwsh
+
+      - name: Package portable app and installation guide
+        id: package
+        run: |
+          $versionLine = Select-String -Path project.yml -Pattern 'MARKETING_VERSION: "([^"]+)"' | Select-Object -First 1
+          if (-not $versionLine) { throw "MARKETING_VERSION not found in project.yml." }
+          $version = $versionLine.Matches[0].Groups[1].Value
+          $packageRoot = Join-Path $env:RUNNER_TEMP "Vikey-Personal-Windows"
+          New-Item -ItemType Directory -Force $packageRoot | Out-Null
+          Copy-Item "Windows/build/App/Vikey.exe" (Join-Path $packageRoot "Vikey.exe")
+
+          @'
+          VIKEY — PERSONAL WINDOWS BUILD
+
+          INSTALL / RUN
+          1. Extract this ZIP to a permanent folder, for example:
+             %LOCALAPPDATA%\Programs\Vikey-Personal
+          2. Double-click Vikey.exe.
+          3. Vikey appears in the Windows notification area (system tray).
+             Right-click its tray icon to open settings or quit.
+          4. If Windows SmartScreen shows an unknown-publisher warning, verify the
+             downloaded file and choose More info > Run anyway only if you trust this build.
+
+          IMPORTANT
+          - This is a personal, unsigned portable build. It is not code-signed.
+          - Automatic updates from vikey.app are disabled. Download a newer build
+            from the Personal Windows Build workflow in GitHub Actions.
+          - Your settings and text-expansion entries are stored in your Windows
+            user profile, separately from this EXE.
+          - Keep the ZIP and BUILD-INFO.txt if you need to identify this build.
+          '@ | Set-Content -Path (Join-Path $packageRoot "INSTALL.txt") -Encoding UTF8
+
+          @"
+          Version: $version
+          Architecture: x64
+          Branch: $env:GITHUB_REF_NAME
+          Commit: $env:GITHUB_SHA
+          Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+          Personal build: yes
+          Upstream automatic updates: disabled
+          "@ | Set-Content -Path (Join-Path $packageRoot "BUILD-INFO.txt") -Encoding UTF8
+
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $zipName = "Vikey-Windows-x64-$version-$env:GITHUB_RUN_NUMBER.zip"
+          Compress-Archive -Path (Join-Path $packageRoot "*") -DestinationPath (Join-Path "dist" $zipName) -CompressionLevel Optimal
+          $hash = (Get-FileHash (Join-Path "dist" $zipName) -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zipName" | Set-Content -Path (Join-Path "dist" "$zipName.sha256") -Encoding ASCII
+
+          "ZIP_NAME=$zipName" >> $env:GITHUB_OUTPUT
+          "VERSION=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Upload downloadable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vikey-Windows-x64-${{ github.run_number }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Build summary
+        run: |
+          @"
+          ## Personal Windows build ready
+
+          - Version: ${{ steps.package.outputs.VERSION }}
+          - Architecture: x64
+          - Artifact: ${{ steps.package.outputs.ZIP_NAME }}
+          - Branch: $env:GITHUB_REF_NAME
+          - Commit: $env:GITHUB_SHA
+          - Personal build: automatic upstream updates disabled
+          - Package: portable ZIP (unsigned)
+          
+          Download the ZIP from the Artifacts section below this workflow run.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+        shell: pwsh
