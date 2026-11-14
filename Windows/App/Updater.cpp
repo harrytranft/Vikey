@@ -200,7 +200,7 @@ void onEvent(WPARAM ev) {
 
 static const UINT_PTR TIMER_UPDATE = 0x7001;
 static void CALLBACK timerProc(HWND, UINT, UINT_PTR, DWORD) {
-    if (!prefs::getInt(L"AutoUpdate", 1)) return;
+    if (!prefs::getInt(L"AutoUpdate", 0)) return;
     int last = prefs::getInt(L"LastUpdateCheck", 0);
     if (time(nullptr) - last >= 24 * 3600) check(false);
 }
@@ -209,7 +209,7 @@ void start(HWND owner) {
     _pendingPath = prefs::getString(L"PendingUpdatePath", L"");
     if (!_pendingPath.empty() && GetFileAttributesW(_pendingPath.c_str()) == INVALID_FILE_ATTRIBUTES) forgetPending();
     SetTimer(owner, TIMER_UPDATE, 60 * 60 * 1000, timerProc);                  // hourly: is a daily check due?
-    std::thread([] { Sleep(20000); if (prefs::getInt(L"AutoUpdate", 1) && time(nullptr) - prefs::getInt(L"LastUpdateCheck", 0) >= 24 * 3600) check(false); }).detach();
+    std::thread([] { Sleep(20000); if (prefs::getInt(L"AutoUpdate", 0) && time(nullptr) - prefs::getInt(L"LastUpdateCheck", 0) >= 24 * 3600) check(false); }).detach();
 }
 void checkNow(HWND owner) { _owner = owner; check(true); }
 bool installPendingAndQuit() {
