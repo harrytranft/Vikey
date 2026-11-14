@@ -1,0 +1,293 @@
+name: Upstream Monitor
+
+on:
+  schedule:
+    # 09:17 Vietnam time (UTC+7), every day.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-monitor
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Fetch and merge Official Vikey
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      upstream_commits: ${{ steps.sync.outputs.upstream_commits }}
+      merge_sha: ${{ steps.sync.outputs.merge_sha }}
+    steps:
+      - name: Checkout personal main with full history
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream and prepare sync branch
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/tonyminibot/Vikey.git
+          git fetch origin main --no-tags
+          git fetch upstream main --no-tags
+
+          UPSTREAM_COMMITS="$(git rev-list --count origin/main..upstream/main)"
+          PERSONAL_COMMITS="$(git rev-list --count upstream/main..origin/main)"
+
+          echo "Official commits not yet in personal main: $UPSTREAM_COMMITS"
+          echo "Personal-only commits retained: $PERSONAL_COMMITS"
+
+          if [ "$UPSTREAM_COMMITS" -eq 0 ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "upstream_commits=0" >> "$GITHUB_OUTPUT"
+            echo "merge_sha=" >> "$GITHUB_OUTPUT"
+            echo "Official Vikey has no new commits. Nothing to sync."
+            exit 0
+          fi
+
+          if ! git merge-base origin/main upstream/main >/dev/null; then
+            echo "::error::No common ancestor between personal main and Official Vikey. Refusing an unrelated-history merge."
+            exit 1
+          fi
+
+          git checkout -B automation/upstream-sync origin/main
+
+          if ! git merge --no-ff --no-edit upstream/main; then
+            echo "::error::Upstream merge has conflicts. No PR will be created; resolve the conflicts manually."
+            git status --short
+            exit 1
+          fi
+
+          git push --force origin HEAD:refs/heads/automation/upstream-sync
+
+          MERGE_SHA="$(git rev-parse HEAD)"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "upstream_commits=$UPSTREAM_COMMITS" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Prepared upstream sync branch at $MERGE_SHA"
+
+  validate-windows:
+    name: Windows tests and Personal build
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout merged upstream branch
+        uses: actions/checkout@v5
+        with:
+          ref: automation/upstream-sync
+          fetch-depth: 0
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+        shell: pwsh
+
+      - name: Run Engine and Text Expansion test suite
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File Windows/check.ps1
+        shell: pwsh
+
+      - name: Verify Personal Build protections and Text Expansion tests remain present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $checks = @(
+            @{ Path = "Windows/App/CMakeLists.txt"; Pattern = "VIKEY_PERSONAL_BUILD" },
+            @{ Path = "Windows/App/Updater.cpp"; Pattern = "VIKEY_PERSONAL_BUILD" },
+            @{ Path = ".github/workflows/personal-windows-build.yml"; Pattern = "VIKEY_PERSONAL_BUILD=ON" },
+            @{ Path = ".github/workflows/personal-macos-build.yml"; Pattern = "SUAutomaticallyUpdate false" },
+            @{ Path = ".github/workflows/personal-macos-build.yml"; Pattern = "SUEnableAutomaticChecks false" },
+            @{ Path = ".github/workflows/personal-macos-build.yml"; Pattern = "SUFeedURL" },
+            @{ Path = "Windows/check.ps1"; Pattern = "text_expansion_engine_test.exe" },
+            @{ Path = "Tools/text_expansion/test.cpp"; Pattern = "main" },
+            @{ Path = "Tools/text_expansion/io_test.cpp"; Pattern = "main" },
+            @{ Path = "Tools/text_expansion/engine_session_test.cpp"; Pattern = "main" }
+          )
+
+          foreach ($check in $checks) {
+            if (-not (Test-Path $check.Path)) {
+              throw "Required personal-build or Text Expansion file is missing: $($check.Path)"
+            }
+            $content = Get-Content $check.Path -Raw
+            if ($content -notmatch $check.Pattern) {
+              throw "Required protection/test marker '$($check.Pattern)' is missing from $($check.Path)"
+            }
+          }
+          Write-Host "Personal update protections and Text Expansion test coverage are present."
+
+      - name: Build Vikey with Personal Build flag enabled
+        shell: pwsh
+        run: |
+          cmake -S Windows -B Windows/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVIKEY_PERSONAL_BUILD=ON
+          if ($LASTEXITCODE -ne 0) { throw "Personal build configuration failed." }
+
+          cmake --build Windows/build --config Release --target vikey
+          if ($LASTEXITCODE -ne 0) { throw "Personal Vikey Windows build failed." }
+
+          if (-not (Test-Path "Windows/build/App/Vikey.exe")) {
+            throw "Personal Vikey.exe was not produced."
+          }
+
+  validate-macos:
+    name: macOS Personal build
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout merged upstream branch
+        uses: actions/checkout@v5
+        with:
+          ref: automation/upstream-sync
+          fetch-depth: 0
+
+      - name: Show build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Verify Personal macOS update protections
+        run: |
+          set -euo pipefail
+          grep -Fq 'SUAutomaticallyUpdate false' .github/workflows/personal-macos-build.yml
+          grep -Fq 'SUEnableAutomaticChecks false' .github/workflows/personal-macos-build.yml
+          grep -Fq 'Delete :SUFeedURL' .github/workflows/personal-macos-build.yml
+          grep -Fq 'Delete :SUPublicEDKey' .github/workflows/personal-macos-build.yml
+          echo "Personal macOS update protections are present."
+
+      - name: Generate Xcode project and resolve packages
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -resolvePackageDependencies -project Vikey.xcodeproj -scheme Vikey
+
+      - name: Build Personal Vikey for Apple Silicon and Intel
+        run: |
+          set -euo pipefail
+          DERIVED_DATA="$RUNNER_TEMP/VikeyDerivedData"
+
+          xcodebuild \
+            -project Vikey.xcodeproj \
+            -scheme Vikey \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$DERIVED_DATA" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          APP_PATH="$DERIVED_DATA/Build/Products/Release/Vikey.app"
+          test -d "$APP_PATH"
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist")
+          BUILT_ARCHS=$(lipo -archs "$APP_PATH/Contents/MacOS/$EXECUTABLE")
+          echo "$BUILT_ARCHS" | grep -q arm64
+          echo "$BUILT_ARCHS" | grep -q x86_64
+
+          PLIST="$APP_PATH/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :SUAutomaticallyUpdate false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Delete :SUScheduledCheckInterval" "$PLIST" || true
+
+          /usr/libexec/PlistBuddy -c "Print :SUAutomaticallyUpdate" "$PLIST" | grep -q false
+          /usr/libexec/PlistBuddy -c "Print :SUEnableAutomaticChecks" "$PLIST" | grep -q false
+
+          codesign --force --deep --sign - --entitlements App/Vikey.entitlements "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+
+          echo "Personal macOS build passed: $BUILT_ARCHS"
+
+  open-pull-request:
+    name: Open or update upstream sync PR
+    needs: [prepare, validate-windows, validate-macos]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Create or update Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_COMMITS: ${{ needs.prepare.outputs.upstream_commits }}
+          MERGE_SHA: ${{ needs.prepare.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+
+          TITLE="chore(upstream): sync Official Vikey updates"
+          BODY_FILE="$RUNNER_TEMP/upstream-sync-pr.md"
+
+          cat > "$BODY_FILE" <<EOF
+          ## Official Vikey sync
+
+          This PR merges new commits from \`tonyminibot/Vikey:main\` into the personal \`main\` branch.
+
+          - Upstream commits included: **$UPSTREAM_COMMITS**
+          - Merge commit: \`$MERGE_SHA\`
+          - Source branch: \`automation/upstream-sync\`
+
+          ## Automated validation
+
+          - [x] Windows Engine and Text Expansion checks (\`Windows/check.ps1\`)
+          - [x] Windows Personal Build (\`VIKEY_PERSONAL_BUILD=ON\`)
+          - [x] macOS Personal Build (Apple Silicon + Intel)
+          - [x] Windows and macOS personal updater protections verified
+
+          ## Review notes
+
+          - This PR does **not** merge itself.
+          - Personal Text Expansion changes and settings must be reviewed before merging.
+          - If upstream changes conflict with personal changes, the monitor stops before creating/updating this PR.
+          - The Personal Build workflows continue to disable upstream in-app auto-updates.
+          EOF
+
+          PR_NUMBER="$(gh pr list \
+            --head automation/upstream-sync \
+            --base main \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr edit "$PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
+            echo "Updated existing upstream sync PR #$PR_NUMBER"
+          else
+            gh pr create \
+              --head automation/upstream-sync \
+              --base main \
+              --title "$TITLE" \
+              --body-file "$BODY_FILE"
+          fi
