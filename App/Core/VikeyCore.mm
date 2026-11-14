@@ -1691,6 +1691,61 @@ static NSTimer* _watchdog = nil;
     }
 }
 
+
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)textExpansions {
+    TextExpansionIOResult r = text_expansion_store::load();
+    if (!r.ok) return @[];
+    NSMutableArray* out = [NSMutableArray arrayWithCapacity:r.entries.size()];
+    for (const auto& e : r.entries) {
+        NSString* trigger = [[NSString alloc] initWithCharacters:(const unichar*)e.trigger.data() length:e.trigger.size()];
+        NSString* replacement = [[NSString alloc] initWithCharacters:(const unichar*)e.replacement.data() length:e.replacement.size()];
+        [out addObject:@{@"trigger": trigger ?: @"", @"replacement": replacement ?: @""}];
+    }
+    return out;
+}
+
++ (BOOL)saveTextExpansions:(NSArray<NSDictionary<NSString *, NSString *> *> *)entries {
+    std::vector<TextExpansionEntry> native;
+    native.reserve(entries.count);
+    for (NSDictionary* item in entries) {
+        NSString* trigger = item[@"trigger"];
+        NSString* replacement = item[@"replacement"];
+        if (![trigger isKindOfClass:NSString.class] || ![replacement isKindOfClass:NSString.class]) continue;
+        std::u16string t((const char16_t*)trigger.UTF16String, trigger.length);
+        std::u16string r((const char16_t*)replacement.UTF16String, replacement.length);
+        if (!t.empty() && !r.empty()) native.push_back({std::move(t), std::move(r)});
+    }
+    std::string error;
+    if (!text_expansion_store::save(native, &error)) return NO;
+    VKLoadSettings();
+    return YES;
+}
+
++ (NSDictionary *)importOpenKeyTextExpansions:(NSString *)text {
+    NSData* data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    std::string utf8;
+    if (data.length) utf8.assign((const char*)data.bytes, data.length);
+    TextExpansionIOResult r = textExpansionImportOpenKey(utf8);
+    NSMutableArray* entries = [NSMutableArray arrayWithCapacity:r.entries.size()];
+    for (const auto& e : r.entries) {
+        NSString* trigger = [[NSString alloc] initWithCharacters:(const unichar*)e.trigger.data() length:e.trigger.size()];
+        NSString* replacement = [[NSString alloc] initWithCharacters:(const unichar*)e.replacement.data() length:e.replacement.size()];
+        [entries addObject:@{@"trigger": trigger ?: @"", @"replacement": replacement ?: @""}];
+    }
+    NSString* error = r.error.empty() ? @"" : [NSString stringWithUTF8String:r.error.c_str()];
+    return @{@"ok": @(r.ok), @"entries": entries, @"imported": @(r.imported),
+             @"replaced": @(r.replaced), @"skipped": @(r.skipped), @"error": error ?: @""};
+}
+
++ (NSDictionary *)exportOpenKeyTextExpansions {
+    TextExpansionIOResult loaded = text_expansion_store::load();
+    if (!loaded.ok) return @{@"ok": @NO, @"text": @"", @"exported": @0, @"skipped": @0, @"error": @"Không đọc được danh sách gõ tắt."};
+    TextExpansionExportResult r = textExpansionExportOpenKey(loaded.entries);
+    NSString* text = [[NSString alloc] initWithBytes:r.text.data() length:r.text.size() encoding:NSUTF8StringEncoding] ?: @"";
+    NSString* error = r.error.empty() ? @"" : [NSString stringWithUTF8String:r.error.c_str()];
+    return @{@"ok": @(r.ok), @"text": text, @"exported": @(r.exported), @"skipped": @(r.skipped), @"error": error ?: @""};
+}
+
 + (NSString*)typingLogPath { return TLLogPath(); }
 + (NSDictionary*)typingLogStats { return TLStatsSnapshot(); }
 + (void)flushTypingLog { TLFlush(); }
